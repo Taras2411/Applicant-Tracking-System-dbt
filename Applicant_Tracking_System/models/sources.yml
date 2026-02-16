@@ -1,0 +1,118 @@
+version: 2
+
+sources:
+  - name: hr_raw_data
+    description: "Raw recruitment data from local CSV files."
+    meta:
+      external_location: "./raw_data/{name}.csv"
+    
+    tables:
+      - name: raw_candidates
+        description: "Table containing candidate personal information."
+        columns:
+          - name: candidate_id
+            description: "Unique identifier for the candidate."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: full_name
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: source
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: profile_created_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+
+      - name: raw_applications
+        description: "Details about specific job applications and salary expectations."
+        columns:
+          - name: app_id
+            description: "Unique application identifier."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: candidate_id
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - relationships:
+                  to: source('hr_raw_data', 'raw_candidates')
+                  field: candidate_id
+                  config:
+                    severity: warn
+          - name: role_level
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - accepted_values:
+                  values: ['Junior', 'Senior', 'Executive']
+                  config:
+                    severity: warn
+          - name: applied_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: decision_date
+
+          - name: expected_salary
+            description: "Annual salary expectation."
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+
+      - name: raw_interviews
+        description: "Logs of interview events and their outcomes."
+        columns:
+          - name: interview_id
+            description: "Unique interview event ID."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: app_id
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - relationships:
+                  to: source('hr_raw_data', 'raw_applications')
+                  field: app_id
+                  config:
+                    severity: warn
+          - name: interview_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: outcome
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - accepted_values:
+                  values: ['Passed', 'Rejected', 'No Show']
+                  config:
+                    severity: warn

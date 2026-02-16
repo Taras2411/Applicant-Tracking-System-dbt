@@ -1,0 +1,8 @@
+version: 2
+
+models:
+- name : int_ats__applications_joined
+  description: "Intermediate model joining candidates and applications to ensure no aplications exist without a corresponding candidate."
+
+- name : int_ats__interviews_validated
+  description: "Intermediate model that removes any interviews with imposible dates (e.g. before application date)"

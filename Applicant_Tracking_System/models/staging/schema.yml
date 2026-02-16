@@ -1,0 +1,63 @@
+version: 2
+
+models:
+  - name: stg_ats__candidates
+    description: "Staging model for candidate data, ensuring all necessary fields are present and valid. Formats source field to be consistent."
+    columns:
+      - name: candidate_id
+        tests:
+          - unique
+          - not_null
+      - name: full_name
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      
+      - name: source
+        tests:
+          - not_null:
+              config:
+                severity: warn          
+      
+  
+
+  - name: stg_ats__applications
+    description: "Staging model for application data, ensuring all necessary fields are present and valid."
+    columns:
+      - name: app_id
+        tests:
+          - unique
+          - not_null
+      - name: candidate_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ats__candidates')
+              field: candidate_id
+              config:
+                severity: warn
+      - name: applied_date
+        tests:
+          - not_null
+      - name: expected_salary
+        tests:
+          - not_null:
+              config:
+                severity: warn
+
+  - name: stg_ats__interviews
+    description: "Staging model for interview data, ensuring all necessary fields are present and valid."
+    columns:
+      - name: interview_id
+        tests:
+          - unique
+          - not_null
+      - name: app_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ats__applications')
+              field: app_id
+              config:
+                severity: warn
