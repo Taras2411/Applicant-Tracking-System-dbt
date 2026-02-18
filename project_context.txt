@@ -1,0 +1,431 @@
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\sources.yml
+==================================================
+
+version: 2
+
+sources:
+  - name: hr_raw_data
+    description: "Raw recruitment data from local CSV files."
+    meta:
+      external_location: "./raw_data/{name}.csv"
+    
+    tables:
+      - name: raw_candidates
+        description: "Table containing candidate personal information."
+        columns:
+          - name: candidate_id
+            description: "Unique identifier for the candidate."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: full_name
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: source
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: profile_created_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+
+      - name: raw_applications
+        description: "Details about specific job applications and salary expectations."
+        columns:
+          - name: app_id
+            description: "Unique application identifier."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: candidate_id
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - relationships:
+                  to: source('hr_raw_data', 'raw_candidates')
+                  field: candidate_id
+                  config:
+                    severity: warn
+          - name: role_level
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - accepted_values:
+                  values: ['Junior', 'Senior', 'Executive']
+                  config:
+                    severity: warn
+          - name: applied_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: decision_date
+
+          - name: expected_salary
+            description: "Annual salary expectation."
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+
+      - name: raw_interviews
+        description: "Logs of interview events and their outcomes."
+        columns:
+          - name: interview_id
+            description: "Unique interview event ID."
+            tests:
+              - unique:
+                  config:
+                    severity: warn
+              - not_null:
+                  config:
+                    severity: warn
+          - name: app_id
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - relationships:
+                  to: source('hr_raw_data', 'raw_applications')
+                  field: app_id
+                  config:
+                    severity: warn
+          - name: interview_date
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          - name: outcome
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - accepted_values:
+                  values: ['Passed', 'Rejected', 'No Show']
+                  config:
+                    severity: warn
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\intermediate\int_ats__applications_joined.sql
+==================================================
+
+with applications as (
+    select * from {{ ref('stg_ats__applications') }}
+),
+
+candidates as (
+    select * from {{ ref('stg_ats__candidates') }}
+)
+
+select
+    a.app_id,
+    a.candidate_id,
+    c.full_name as candidate_name,
+    c.source as candidate_source,
+    a.role_level,
+    a.applied_date,
+    a.decision_date
+from applications a
+inner join candidates c on a.candidate_id = c.candidate_id
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\intermediate\int_ats__interviews_validated.sql
+==================================================
+
+with interviews as (
+    select * from {{ ref('stg_ats__interviews') }}
+),
+
+applications as (
+    select * from {{ ref('stg_ats__applications') }}
+)
+
+select
+    i.interview_id,
+    i.app_id,
+    i.interview_date,
+    i.outcome,
+    -- Можно сразу протащить дату подачи, если пригодится
+    a.applied_date
+from interviews i
+inner join applications a
+    on i.app_id = a.app_id
+where 
+    -- 1. Проверяем, что интервью было ПОСЛЕ или В ДЕНЬ подачи
+    i.interview_date >= a.applied_date
+    -- 2. Если нужны только интервью с существующей заявкой, INNER JOIN это уже сделал
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\intermediate\schema.yml
+==================================================
+
+version: 2
+
+models:
+- name : int_ats__applications_joined
+  description: "Intermediate model joining candidates and applications to ensure no aplications exist without a corresponding candidate."
+
+- name : int_ats__interviews_validated
+  description: "Intermediate model that removes any interviews with imposible dates (e.g. before application date)"
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\mart\dm_cumulative_hires.sql
+==================================================
+
+{{ config(
+    materialized='table'
+) }}
+
+with applications as (
+    select * from {{ ref('int_ats__applications_joined') }}
+),
+
+
+valid_hires as (
+    select
+        candidate_source as source,
+
+        date_trunc('month', decision_date) as hire_month,
+        count(app_id) as hires_count
+    from applications
+    where 
+        decision_date is not null
+
+        and date_diff('day', applied_date, decision_date) < 90
+    group by 1, 2
+),
+
+
+final as (
+    select
+        source,
+        hire_month,
+        hires_count as monthly_hires,
+        sum(hires_count) over (
+            partition by source 
+            order by hire_month
+            rows between unbounded preceding and current row
+        ) as cumulative_hires
+    from valid_hires
+)
+
+select * from final
+order by source, hire_month
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\mart\dm_hiring_process.sql
+==================================================
+
+{{ config(
+    materialized='table'
+) }}
+
+with applications as (
+    select * from {{ ref('int_ats__applications_joined') }}
+),
+
+candidates as (
+    select * from {{ ref('stg_ats__candidates') }}
+),
+
+-- Агрегируем только успешные интервью
+passed_interviews as (
+    select 
+        app_id,
+        count(interview_id) as total_passed_interviews
+    from {{ ref('int_ats__interviews_validated') }}
+    where outcome = 'Passed'
+    group by 1
+)
+
+select
+    a.app_id,
+    c.full_name as candidate_name,
+    c.source as candidate_source,
+    a.role_level,
+    a.applied_date,
+    a.decision_date,
+    -- Расчет Time-to-Decision (Время до принятия решения в днях)
+    date_diff('day', a.applied_date, a.decision_date) as time_to_decision,
+    coalesce(p.total_passed_interviews, 0) as total_passed_interviews,
+from applications a
+left join candidates c on a.candidate_id = c.candidate_id
+left join passed_interviews p on a.app_id = p.app_id
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\mart\dm_monthly_active_pipeline.sql
+==================================================
+
+-- INCORRECT!
+
+
+with source as (
+    select 
+        app_id,
+        applied_date,
+        -- Если решения нет, считаем заявку активной по сей день
+        coalesce(decision_date, current_date) as end_date
+    from {{ ref('dm_hiring_process') }}
+),
+
+expanded_months as (
+    select
+        app_id,
+        -- Генерируем серию дат (месяцев) для каждой заявки
+        unnest(generate_series(
+            date_trunc('month', applied_date), 
+            date_trunc('month', end_date), 
+            interval 1 month
+        )) as report_month
+    from source
+)
+
+select
+    report_month,
+    count(distinct app_id) as active_applications
+from expanded_months
+group by report_month
+order by report_month desc
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\mart\schema.yml
+==================================================
+
+
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\staging\schema.yml
+==================================================
+
+version: 2
+
+models:
+  - name: stg_ats__candidates
+    description: "Staging model for candidate data, ensuring all necessary fields are present and valid. Formats source field to be consistent."
+    columns:
+      - name: candidate_id
+        tests:
+          - unique
+          - not_null
+      - name: full_name
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      
+      - name: source
+        tests:
+          - not_null:
+              config:
+                severity: warn          
+      
+  
+
+  - name: stg_ats__applications
+    description: "Staging model for application data, ensuring all necessary fields are present and valid."
+    columns:
+      - name: app_id
+        tests:
+          - unique
+          - not_null
+      - name: candidate_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ats__candidates')
+              field: candidate_id
+              config:
+                severity: warn
+      - name: applied_date
+        tests:
+          - not_null
+      - name: expected_salary
+        tests:
+          - not_null:
+              config:
+                severity: warn
+
+  - name: stg_ats__interviews
+    description: "Staging model for interview data, ensuring all necessary fields are present and valid."
+    columns:
+      - name: interview_id
+        tests:
+          - unique
+          - not_null
+      - name: app_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ats__applications')
+              field: app_id
+              config:
+                severity: warn
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__applications.sql
+==================================================
+
+select distinct on (app_id)
+    app_id,
+    candidate_id,
+    role_level,
+    applied_date,
+    decision_date,
+
+    case 
+        when expected_salary < 0 then null 
+        else expected_salary 
+    end as expected_salary
+from {{ source('hr_raw_data', 'raw_applications') }}
+where 
+
+    app_id is not null 
+    and candidate_id is not null
+    and (decision_date is null or decision_date >= applied_date)
+
+order by app_id, applied_date desc
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__candidates.sql
+==================================================
+
+select distinct on (candidate_id)
+    candidate_id,
+    full_name,
+    upper(substr(trim(source), 1, 1)) || lower(substr(trim(source), 2)) as source,
+    profile_created_date
+from {{ source('hr_raw_data', 'raw_candidates') }}
+where candidate_id is not null
+order by candidate_id, profile_created_date desc
+
+==================================================
+FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__interviews.sql
+==================================================
+
+select distinct on (interview_id)
+    interview_id,
+    app_id,
+    interview_date,
+    outcome
+from {{ source('hr_raw_data', 'raw_interviews') }}
+where 
+    interview_id is not null
+    and app_id is not null
+order by interview_id, interview_date desc

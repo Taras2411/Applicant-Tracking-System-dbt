@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: dm_hiring_process
+    description: "Data Mart joining candidates, applications, and interview metrics. One row per application."
+    columns:
+      - name: app_id
+        description: "Unique identifier for the application."
+        tests:
+          - unique
+          - not_null
+      - name: time_to_decision
+        description: "Days taken from application to final decision. Null if process is active."
+      - name: total_passed_interviews
+        description: "Count of interviews with a 'Passed' outcome."
+        tests:
+          - not_null
+
+  - name: dm_cumulative_hires
+    description: "Cumulative count of hires by source, growing month over month."
+    columns:
+      - name: source
+        description: "Candidate origin (e.g., LinkedIn)."
+      - name: hire_month
+        description: "The month the hiring decision was made."
+      - name: cumulative_hires
+        description: "Running total of hires for this source up to this month."
+        tests:
+          - not_null
+
+  - name: dm_monthly_active_pipeline
+    description: "Monthly snapshot of how many applications were active (in-process)."
+    columns:
+      - name: report_month
+        description: "The reporting month."
+        tests:
+          - unique:
+              severity: warn 
+          - not_null
+      - name: active_applications
+        description: "Count of applications open during this month."

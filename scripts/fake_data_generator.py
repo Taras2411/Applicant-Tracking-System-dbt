@@ -39,11 +39,15 @@ def generate_messy_data():
         
         applied_date = fake.date_between(start_date=profile_date, end_date='today')
         
-        decision_date = None
-        if random.choice([True, True, False]):
+        has_decision = random.choice([True, True, False])
+
+        if has_decision:
             decision_date = applied_date + timedelta(days=random.randint(1, 60))
-            if decision_date > date.today():
-                decision_date = date.today()
+        else:
+            if (date.today() - applied_date).days > 90:
+                decision_date = applied_date + timedelta(days=90) 
+            else:
+                decision_date = None
         
         role = random.choice(['Junior', 'Senior', 'Executive'])
         salary = random.randint(40000, 160000)

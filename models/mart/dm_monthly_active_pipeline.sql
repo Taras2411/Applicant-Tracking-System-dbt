@@ -1,11 +1,11 @@
--- INCORRECT!
-
+{{ config(
+    materialized='table'
+) }}
 
 with source as (
     select 
         app_id,
         applied_date,
-        -- Если решения нет, считаем заявку активной по сей день
         coalesce(decision_date, current_date) as end_date
     from {{ ref('dm_hiring_process') }}
 ),
@@ -13,7 +13,6 @@ with source as (
 expanded_months as (
     select
         app_id,
-        -- Генерируем серию дат (месяцев) для каждой заявки
         unnest(generate_series(
             date_trunc('month', applied_date), 
             date_trunc('month', end_date), 
