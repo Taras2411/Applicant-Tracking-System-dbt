@@ -35,7 +35,8 @@ models:
         description: "The reporting month."
         tests:
           - unique:
-              severity: warn 
+              config:
+                severity: warn
           - not_null
       - name: active_applications
         description: "Count of applications open during this month."

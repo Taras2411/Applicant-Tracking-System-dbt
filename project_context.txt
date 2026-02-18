@@ -1,6 +1,68 @@
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\sources.yml
+FILE: dbt_project.yml
+==================================================
+
+# Name your project! Project names should contain only lowercase characters
+# and underscores. A good package name should reflect your organization's
+# name or the intended use of these models
+name: 'Applicant_Tracking_System'
+version: '1.0.0'
+
+# This setting configures which "profile" dbt uses for this project.
+profile: 'Applicant_Tracking_System'
+
+# These configurations specify where dbt should look for different types of files.
+# The `model-paths` config, for example, states that models in this project can be
+# found in the "models/" directory. You probably won't need to change these!
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:         # directories to be removed by `dbt clean`
+  - "target"
+  - "dbt_packages"
+
+
+# Configuring models
+# Full documentation: https://docs.getdbt.com/docs/configuring-models
+
+# In this example config, we tell dbt to build all models in the example/
+# directory as views. These settings can be overridden in the individual model
+# files using the `{{ config(...) }}` macro.
+models:
+  Applicant_Tracking_System:
+    # +materialized: table
+    # Config indicated by + and applies to all files under models/example/
+
+
+
+
+
+==================================================
+FILE: package-lock.yml
+==================================================
+
+packages:
+  - name: dbt_utils
+    package: dbt-labs/dbt_utils
+    version: 1.3.3
+sha1_hash: 5ffdb7983bbd653b524c5344daf6cb5fd9eaf293
+
+
+==================================================
+FILE: packages.yml
+==================================================
+
+packages:
+  - package: dbt-labs/dbt_utils
+    version: 1.3.3
+
+==================================================
+FILE: models\sources.yml
 ==================================================
 
 version: 2
@@ -123,7 +185,7 @@ sources:
                     severity: warn
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\intermediate\int_ats__applications_joined.sql
+FILE: models\intermediate\int_ats__applications_joined.sql
 ==================================================
 
 with applications as (
@@ -146,7 +208,7 @@ from applications a
 inner join candidates c on a.candidate_id = c.candidate_id
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\intermediate\int_ats__interviews_validated.sql
+FILE: models\intermediate\int_ats__interviews_validated.sql
 ==================================================
 
 with interviews as (
@@ -162,18 +224,15 @@ select
     i.app_id,
     i.interview_date,
     i.outcome,
-    -- Можно сразу протащить дату подачи, если пригодится
     a.applied_date
 from interviews i
 inner join applications a
     on i.app_id = a.app_id
 where 
-    -- 1. Проверяем, что интервью было ПОСЛЕ или В ДЕНЬ подачи
     i.interview_date >= a.applied_date
-    -- 2. Если нужны только интервью с существующей заявкой, INNER JOIN это уже сделал
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\intermediate\schema.yml
+FILE: models\intermediate\schema.yml
 ==================================================
 
 version: 2
@@ -186,7 +245,7 @@ models:
   description: "Intermediate model that removes any interviews with imposible dates (e.g. before application date)"
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\mart\dm_cumulative_hires.sql
+FILE: models\mart\dm_cumulative_hires.sql
 ==================================================
 
 {{ config(
@@ -230,7 +289,7 @@ select * from final
 order by source, hire_month
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\mart\dm_hiring_process.sql
+FILE: models\mart\dm_hiring_process.sql
 ==================================================
 
 {{ config(
@@ -245,7 +304,7 @@ candidates as (
     select * from {{ ref('stg_ats__candidates') }}
 ),
 
--- Агрегируем только успешные интервью
+
 passed_interviews as (
     select 
         app_id,
@@ -262,7 +321,6 @@ select
     a.role_level,
     a.applied_date,
     a.decision_date,
-    -- Расчет Time-to-Decision (Время до принятия решения в днях)
     date_diff('day', a.applied_date, a.decision_date) as time_to_decision,
     coalesce(p.total_passed_interviews, 0) as total_passed_interviews,
 from applications a
@@ -270,17 +328,17 @@ left join candidates c on a.candidate_id = c.candidate_id
 left join passed_interviews p on a.app_id = p.app_id
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\mart\dm_monthly_active_pipeline.sql
+FILE: models\mart\dm_monthly_active_pipeline.sql
 ==================================================
 
--- INCORRECT!
-
+{{ config(
+    materialized='table'
+) }}
 
 with source as (
     select 
         app_id,
         applied_date,
-        -- Если решения нет, считаем заявку активной по сей день
         coalesce(decision_date, current_date) as end_date
     from {{ ref('dm_hiring_process') }}
 ),
@@ -288,7 +346,6 @@ with source as (
 expanded_months as (
     select
         app_id,
-        -- Генерируем серию дат (месяцев) для каждой заявки
         unnest(generate_series(
             date_trunc('month', applied_date), 
             date_trunc('month', end_date), 
@@ -305,13 +362,53 @@ group by report_month
 order by report_month desc
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\mart\schema.yml
+FILE: models\mart\schema.yml
 ==================================================
 
+version: 2
 
+models:
+  - name: dm_hiring_process
+    description: "Data Mart joining candidates, applications, and interview metrics. One row per application."
+    columns:
+      - name: app_id
+        description: "Unique identifier for the application."
+        tests:
+          - unique
+          - not_null
+      - name: time_to_decision
+        description: "Days taken from application to final decision. Null if process is active."
+      - name: total_passed_interviews
+        description: "Count of interviews with a 'Passed' outcome."
+        tests:
+          - not_null
+
+  - name: dm_cumulative_hires
+    description: "Cumulative count of hires by source, growing month over month."
+    columns:
+      - name: source
+        description: "Candidate origin (e.g., LinkedIn)."
+      - name: hire_month
+        description: "The month the hiring decision was made."
+      - name: cumulative_hires
+        description: "Running total of hires for this source up to this month."
+        tests:
+          - not_null
+
+  - name: dm_monthly_active_pipeline
+    description: "Monthly snapshot of how many applications were active (in-process)."
+    columns:
+      - name: report_month
+        description: "The reporting month."
+        tests:
+          - unique:
+              severity: warn 
+          - not_null
+      - name: active_applications
+        description: "Count of applications open during this month."
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\staging\schema.yml
+FILE: models\staging\schema.yml
 ==================================================
 
 version: 2
@@ -379,7 +476,7 @@ models:
                 severity: warn
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__applications.sql
+FILE: models\staging\stg_ats__applications.sql
 ==================================================
 
 select distinct on (app_id)
@@ -403,7 +500,7 @@ where
 order by app_id, applied_date desc
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__candidates.sql
+FILE: models\staging\stg_ats__candidates.sql
 ==================================================
 
 select distinct on (candidate_id)
@@ -416,7 +513,7 @@ where candidate_id is not null
 order by candidate_id, profile_created_date desc
 
 ==================================================
-FILE: C:\1work\Data_en_test_task\models\staging\stg_ats__interviews.sql
+FILE: models\staging\stg_ats__interviews.sql
 ==================================================
 
 select distinct on (interview_id)
@@ -429,3 +526,247 @@ where
     interview_id is not null
     and app_id is not null
 order by interview_id, interview_date desc
+
+==================================================
+FILE: scripts\collect_dbt.py
+==================================================
+
+import os
+
+def collect_files(output_file='project_context.txt'):
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_path = os.path.join(project_root, output_file)
+    
+    extensions = ('.sql', '.yml', '.yaml', '.py')
+    
+    exclude_dirs = {
+        'target', 'dbt_packages', 'logs', 'venv_gen', 
+        'venv', '.venv', '__pycache__', '.git', '.idea', '.vscode'
+    }
+    
+    with open(output_path, 'w', encoding='utf-8') as f_out:
+        for root, dirs, files in os.walk(project_root):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            
+            for file in files:
+                if file == output_file:
+                    continue
+
+                if file.endswith(extensions):
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, project_root)
+                    
+                    f_out.write(f"\n{'='*50}\n")
+                    f_out.write(f"FILE: {rel_path}\n")
+                    f_out.write(f"{'='*50}\n\n")
+                    
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f_in:
+                            f_out.write(f_in.read())
+                    except Exception:
+                        pass
+                    
+                    f_out.write("\n")
+
+if __name__ == "__main__":
+    collect_files()
+    print("done!")
+
+==================================================
+FILE: scripts\fake_data_generator.py
+==================================================
+
+import pandas as pd
+import random
+import numpy as np
+from faker import Faker
+from datetime import timedelta, date
+
+fake = Faker()
+Faker.seed(42)
+random.seed(42)
+
+# Constants
+NUM_CANDIDATES = 200
+NUM_APPLICATIONS = 250
+NUM_INTERVIEWS = 600
+
+def generate_messy_data():
+    
+    # raw_candidates
+    candidates = []
+    candidate_ids = list(range(1, NUM_CANDIDATES + 1))
+    
+    for cid in candidate_ids:
+        candidates.append({
+            "candidate_id": cid,
+            "full_name": fake.name(),
+            "source": random.choice(['LinkedIn', 'Referral', 'Career Page', 'Agency']),
+            "profile_created_date": fake.date_between(start_date='-2y', end_date='-1y')
+        })
+    
+    df_candidates = pd.DataFrame(candidates)
+    
+    # raw_applications
+    applications = []
+    app_ids = list(range(1, NUM_APPLICATIONS + 1))
+    
+    for aid in app_ids:
+        cand = df_candidates.sample(1).iloc[0]
+        profile_date = cand["profile_created_date"]
+        
+        applied_date = fake.date_between(start_date=profile_date, end_date='today')
+        
+        has_decision = random.choice([True, True, False])
+
+        if has_decision:
+            decision_date = applied_date + timedelta(days=random.randint(1, 60))
+        else:
+            if (date.today() - applied_date).days > 90:
+                decision_date = applied_date + timedelta(days=90) 
+            else:
+                decision_date = None
+        
+        role = random.choice(['Junior', 'Senior', 'Executive'])
+        salary = random.randint(40000, 160000)
+        
+        applications.append({
+            "app_id": aid,
+            "candidate_id": cand["candidate_id"],
+            "role_level": role,
+            "applied_date": applied_date,
+            "decision_date": decision_date,
+            "expected_salary": salary
+        })
+        
+    df_applications = pd.DataFrame(applications)
+
+    #raw_interviews
+    interviews = []
+    interview_ids = list(range(1, NUM_INTERVIEWS + 1))
+    
+    for iid in interview_ids:
+        app = df_applications.sample(1).iloc[0]
+        
+        end_date_limit = app["decision_date"] if app["decision_date"] else date.today()
+        if end_date_limit <= app["applied_date"]:
+            interview_date = app["applied_date"]
+        else:
+            interview_date = fake.date_between(start_date=app["applied_date"], end_date=end_date_limit)
+
+        interviews.append({
+            "interview_id": iid,
+            "app_id": app["app_id"],
+            "interview_date": interview_date,
+            "outcome": random.choice(['Passed', 'Rejected', 'No Show'])
+        })
+        
+    df_interviews = pd.DataFrame(interviews)
+
+
+    # DATA CORRUPTION
+    # 1. Duplicates
+    duplicates = df_candidates.sample(n=5)
+    df_candidates = pd.concat([df_candidates, duplicates], ignore_index=True)
+    
+    # 2. Timeliness Violations
+    bad_interview_indices = df_interviews.sample(10).index
+    for idx in bad_interview_indices:
+        app_id = df_interviews.loc[idx, 'app_id']
+        app_date = df_applications[df_applications['app_id'] == app_id].iloc[0]['applied_date']
+        df_interviews.loc[idx, 'interview_date'] = app_date - timedelta(days=random.randint(10, 30))
+
+    bad_app_indices = df_applications[df_applications['decision_date'].notnull()].sample(5).index
+    for idx in bad_app_indices:
+        df_applications.loc[idx, 'decision_date'] = df_applications.loc[idx, 'applied_date'] - timedelta(days=5)
+
+    # 3. Orphan Records / FK Violation
+    ghost_app = df_applications.iloc[0].copy()
+    ghost_app['app_id'] = 9999  
+    ghost_app['candidate_id'] = 99999
+    df_applications = pd.concat([df_applications, pd.DataFrame([ghost_app])], ignore_index=True)
+
+    # Dirty Data
+    # 'LinkedIn' -> 'linkedin', 'Referral' -> ' referral '
+    dirty_indices = df_candidates.sample(8).index
+    df_candidates.loc[dirty_indices, 'source'] = df_candidates.loc[dirty_indices, 'source'].apply(
+        lambda x: x.lower() if random.random() > 0.5 else f" {x} "
+    )
+    
+    neg_salary_idx = df_applications.sample(3).index
+    df_applications.loc[neg_salary_idx, 'expected_salary'] = -50000
+    
+    df_candidates.loc[df_candidates.sample(2).index, 'full_name'] = None
+
+    df_candidates.to_csv('raw_candidates.csv', index=False)
+    df_applications.to_csv('raw_applications.csv', index=False)
+    df_interviews.to_csv('raw_interviews.csv', index=False)
+    
+    print("Done!")
+
+if __name__ == "__main__":
+    generate_messy_data()
+
+==================================================
+FILE: scripts\visualization.py
+==================================================
+
+import duckdb
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import os
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+db_path = os.path.join(project_root, 'dev.duckdb')
+
+con = duckdb.connect(db_path)
+
+
+query = """
+    SELECT 
+        source, 
+        hire_month, 
+        cumulative_hires 
+    FROM dm_cumulative_hires 
+    ORDER BY hire_month
+"""
+
+df = con.execute(query).df()
+con.close()
+
+if df.empty:
+    print("No data found to display. Please ensure 'dbt run' has been executed successfully.")
+    exit()
+
+
+plt.figure(figsize=(12, 6))
+sns.set_theme(style="whitegrid")
+
+
+plot = sns.lineplot(
+    data=df, 
+    x='hire_month', 
+    y='cumulative_hires', 
+    hue='source',     
+    marker='o',       
+    linewidth=2.5
+)
+
+
+plot.set_title('Cumulative Hires by Source', fontsize=16)
+plot.set_xlabel('Month', fontsize=12)
+plot.set_ylabel('Total Hires (Cumulative)', fontsize=12)
+
+
+plot.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+plot.xaxis.set_major_locator(mdates.MonthLocator())
+plt.xticks(rotation=45)
+
+
+plt.legend(title='Source', title_fontsize='12', loc='upper left')
+
+
+plt.tight_layout()
+plt.show()

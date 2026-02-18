@@ -4,4 +4,7 @@ dbt_packages/
 logs/
 .vscode/
 venv_gen/
-Applicant_Tracking_System/project_context.txt
+project_context.txt
+*.duckdb
+*.db
+*.wal
