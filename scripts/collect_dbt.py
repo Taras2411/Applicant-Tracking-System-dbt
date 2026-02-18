@@ -4,7 +4,7 @@ def collect_files(output_file='project_context.txt'):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_path = os.path.join(project_root, output_file)
     
-    extensions = ('.sql', '.yml', '.yaml', '.py')
+    extensions = ('.sql', '.yml', '.yaml')
     
     exclude_dirs = {
         'target', 'dbt_packages', 'logs', 'venv_gen', 
